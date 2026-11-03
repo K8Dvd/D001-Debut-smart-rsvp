@@ -53,7 +53,10 @@ export const EVENT = {
   dateISO: DEBUT_DATE, weekday: WEEKDAY, month: MONTH, day: D, year: Y, dateDisplay: LONG, dateShort: SHORT, timeDisplay: "5:30 PM",
   venueName: "Okada Manila", address: "New Seaside Drive, Entertainment City, Parañaque, Metro Manila",  // ← please verify the address
   mapLink: "https://maps.app.goo.gl/MJ3nqTScP5GP5aeD9",   // "Open map" button ("" hides it)
-  mapEmbed: "https://www.google.com/maps?q=Okada+Manila&ll=14.5151576,120.9814988&z=16&output=embed",  // live map preview ("" hides it)
+  // Live map preview ("" hides it). Default = OpenStreetMap (works in every phone browser, no key needed). lat/lng below = Okada Manila.
+  // To use Google instead: Google Maps → Share → "Embed a map" → copy ONLY the src="https://www.google.com/maps/embed?pb=..." link and paste it here.
+  // (Do NOT use the old "google.com/maps?q=...&output=embed" link: phones often show "Webpage not available".)
+  mapEmbed: "https://www.openstreetmap.org/export/embed.html?bbox=120.9775%2C14.5126%2C120.9855%2C14.5176&layer=mapnik&marker=14.5151576%2C120.9814988",
   dressCode: "Formal · Crimson, black or ivory", rsvpDeadline: "April 30, 2027",
   invitation: "With joy in our hearts, we invite you to be part of the night she steps into the spotlight. Your presence is the best gift.",
   description: "An evening of music, memories and a little bit of magic as we celebrate a milestone.",

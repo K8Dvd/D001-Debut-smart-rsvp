@@ -159,7 +159,15 @@ async function renderTicketBlob(guest: Guest, status: RsvpStatus): Promise<Blob 
   const x = c.getContext("2d"); if (!x) return null;
   try { await Promise.race([new Promise((r) => setTimeout(r, 2500)), Promise.all([document.fonts.load(`800 80px ${THEME.displayFont}`), document.fonts.load(`italic 500 40px ${THEME.displayFont}`), document.fonts.load(`600 24px ${THEME.bodyFont}`)])]); } catch { /* system fonts are fine */ }
   const load = (src: string) => new Promise<HTMLImageElement | null>((res) => { const im = new Image(); const to = setTimeout(() => res(null), 6000); im.onload = () => { clearTimeout(to); res(im); }; im.onerror = () => { clearTimeout(to); res(null); }; im.src = src; });
-  const [photo, cl, cr] = await Promise.all([load(PHOTO(MEDIA.heroPhoto)), load(MIRROR_FLOWERS ? ELS.cornerRight : ELS.cornerLeft), load(ELS.cornerRight)]);
+  /** Big phone photos can crash a phone browser if decoded at full size, so decode the cover photo already shrunk to 1080px wide. */
+  const loadPhoto = async (src: string): Promise<CanvasImageSource & { width: number; height: number } | null> => {
+    try {
+      const r = await Promise.race([fetch(src), new Promise<never>((_, no) => setTimeout(() => no(new Error("timeout")), 8000))]);
+      if (!r.ok) return null;
+      return await createImageBitmap(await r.blob(), { resizeWidth: 1080, resizeQuality: "medium" });
+    } catch { return load(src); }
+  };
+  const [photo, cl, cr] = await Promise.all([loadPhoto(PHOTO(MEDIA.heroPhoto)), load(MIRROR_FLOWERS ? ELS.cornerRight : ELS.cornerLeft), load(ELS.cornerRight)]);
   type O = { color?: string; weight?: number; display?: boolean; italic?: boolean; ls?: string; x?: number };
   const setFont = (px: number, o: O) => {
     x.font = `${o.italic ? "italic " : ""}${o.weight ?? 400} ${px}px ${o.display ? THEME.displayFont : THEME.bodyFont}`;
@@ -220,21 +228,21 @@ function TicketModal({ blob, name, onClose }: { blob: Blob; name: string; onClos
   useEffect(() => () => URL.revokeObjectURL(url), [url]);
   useEffect(() => { const k = (e: KeyboardEvent) => e.key === "Escape" && onClose(); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
   const file = `${name.trim().replace(/\s+/g, "-").toLowerCase()}-ticket.png`;
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const inApp = /FBAN|FBAV|FB_IAB|Messenger|Instagram|Viber|Line\/|MicroMessenger|Snapchat/i.test(navigator.userAgent);
   const save = async () => {
-    try {
-      const f = new File([blob], file, { type: "image/png" });
-      if (navigator.canShare?.({ files: [f] })) { await navigator.share({ files: [f], title: `${EVENT.title} ticket` }); return; }
-    } catch { /* cancelled or unsupported → fall through to download */ }
+    if (ios) {   // iPhone/iPad: the share sheet has "Save Image" (goes to Photos)
+      try { const f = new File([blob], file, { type: "image/png" }); if (navigator.canShare?.({ files: [f] })) { await navigator.share({ files: [f] }); return; } } catch { /* fall through */ }
+    }
     const a = document.createElement("a"); a.href = url; a.download = file; document.body.appendChild(a); a.click(); a.remove();
   };
   return (
     <div className="tmodal" role="dialog" aria-modal="true" aria-label="Your ticket" onClick={onClose}>
       <div className="tmodal__box" onClick={(e) => e.stopPropagation()}>
         <img src={url} alt={`Ticket for ${name}`} />
-        <p className="fine">On phone: tap Save, then choose “Save Image”. Or press and hold the picture.</p>
+        <p className="fine">{inApp ? "Downloads are blocked inside this app. Press and hold the picture, then tap “Save image”. Or open this page in Chrome / Safari." : "Didn’t download? Press and hold the picture, then tap “Save image”."}</p>
         <div className="result__actions" style={{ justifyContent: "center", marginTop: ".6rem" }}>
-          <button className="btn" onClick={save}>Save ticket</button>
-          <a className="btn btn--ghost" href={url} download={file}>Download</a>
+          <button className="btn" onClick={save}>Download</button>
           <button className="btn btn--ghost" onClick={onClose}>Close</button>
         </div>
       </div>
@@ -683,7 +691,7 @@ function Finder({ onReveal }: { onReveal: () => void }) {
                 {!API.endpoint && <p className="fine">Demo mode: replies stay in this browser until a Google Sheet is connected (see data.ts).</p>}
               </div>
               <div className="result__actions">
-                <button className="btn" disabled={saving} onClick={async () => { setSaving(true); try { const b = await renderTicketBlob(guest, rsvp); if (b) setTicketBlob(b); else setSent("Could not prepare the picture. Please screenshot your ticket instead."); } catch { setSent("Could not prepare the picture. Please screenshot your ticket instead."); } finally { setSaving(false); } }}>{saving ? "Preparing…" : "Save ticket"}</button>
+                <button className="btn" disabled={saving} onClick={async () => { setSaving(true); try { const b = await renderTicketBlob(guest, rsvp); if (b) setTicketBlob(b); else setSent("Could not prepare the picture. Please screenshot your ticket instead."); } catch { setSent("Could not prepare the picture. Please screenshot your ticket instead."); } finally { setSaving(false); } }}>{saving ? "Preparing…" : "Download ticket"}</button>
                 <button className="btn btn--ghost" onClick={() => goTo("invitation")}>Back to invitation</button>
                 <button className="btn btn--ghost" onClick={reset}>Search again</button>
               </div>
