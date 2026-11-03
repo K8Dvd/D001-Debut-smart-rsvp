@@ -154,11 +154,11 @@ const Sparkles = () => {
     <span key={s.id} className="sparkle" style={{ left: `${s.left}%`, animationDuration: `${s.dur}s`, animationDelay: `${s.delay}s` }} />)}</div>;
 };
 /** Saves the guest's ticket + event summary as a PNG picture (drawn on a canvas, no extra libraries). */
-async function downloadTicketImage(guest: Guest, status: RsvpStatus) {
+async function renderTicketBlob(guest: Guest, status: RsvpStatus): Promise<Blob | null> {
   const W = 1080, H = 1920, c = document.createElement("canvas"); c.width = W; c.height = H;
-  const x = c.getContext("2d"); if (!x) return;
-  try { await Promise.all([document.fonts.load(`800 80px ${THEME.displayFont}`), document.fonts.load(`italic 500 40px ${THEME.displayFont}`), document.fonts.load(`600 24px ${THEME.bodyFont}`)]); } catch { /* system fonts are fine */ }
-  const load = (src: string) => new Promise<HTMLImageElement | null>((res) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
+  const x = c.getContext("2d"); if (!x) return null;
+  try { await Promise.race([new Promise((r) => setTimeout(r, 2500)), Promise.all([document.fonts.load(`800 80px ${THEME.displayFont}`), document.fonts.load(`italic 500 40px ${THEME.displayFont}`), document.fonts.load(`600 24px ${THEME.bodyFont}`)])]); } catch { /* system fonts are fine */ }
+  const load = (src: string) => new Promise<HTMLImageElement | null>((res) => { const im = new Image(); const to = setTimeout(() => res(null), 6000); im.onload = () => { clearTimeout(to); res(im); }; im.onerror = () => { clearTimeout(to); res(null); }; im.src = src; });
   const [photo, cl, cr] = await Promise.all([load(PHOTO(MEDIA.heroPhoto)), load(MIRROR_FLOWERS ? ELS.cornerRight : ELS.cornerLeft), load(ELS.cornerRight)]);
   type O = { color?: string; weight?: number; display?: boolean; italic?: boolean; ls?: string; x?: number };
   const setFont = (px: number, o: O) => {
@@ -210,11 +210,36 @@ async function downloadTicketImage(guest: Guest, status: RsvpStatus) {
   PROGRAM.forEach((p, k) => put(`${p.time}  ·  ${p.title}`, 1672 + k * step, 27, { color: soft }));
   put(EVENT.hashtag, 1872, 22, { color: THEME.accent, weight: 600, ls: "6px" });
 
-  const blob: Blob | null = await new Promise((r) => c.toBlob(r, "image/png"));
-  if (!blob) return;
-  const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
-  link.download = `${guest.fullName.trim().replace(/\s+/g, "-").toLowerCase()}-ticket.png`;
-  document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+  return await new Promise<Blob | null>((r) => { try { c.toBlob(r, "image/png"); } catch { r(null); } });
+}
+
+
+/** Shows the finished ticket picture. Mobile: "Save" opens the share sheet (Save Image); fallback = press & hold the picture. Desktop: downloads the PNG. */
+function TicketModal({ blob, name, onClose }: { blob: Blob; name: string; onClose: () => void }) {
+  const url = useMemo(() => URL.createObjectURL(blob), [blob]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  useEffect(() => { const k = (e: KeyboardEvent) => e.key === "Escape" && onClose(); window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
+  const file = `${name.trim().replace(/\s+/g, "-").toLowerCase()}-ticket.png`;
+  const save = async () => {
+    try {
+      const f = new File([blob], file, { type: "image/png" });
+      if (navigator.canShare?.({ files: [f] })) { await navigator.share({ files: [f], title: `${EVENT.title} ticket` }); return; }
+    } catch { /* cancelled or unsupported → fall through to download */ }
+    const a = document.createElement("a"); a.href = url; a.download = file; document.body.appendChild(a); a.click(); a.remove();
+  };
+  return (
+    <div className="tmodal" role="dialog" aria-modal="true" aria-label="Your ticket" onClick={onClose}>
+      <div className="tmodal__box" onClick={(e) => e.stopPropagation()}>
+        <img src={url} alt={`Ticket for ${name}`} />
+        <p className="fine">On phone: tap Save, then choose “Save Image”. Or press and hold the picture.</p>
+        <div className="result__actions" style={{ justifyContent: "center", marginTop: ".6rem" }}>
+          <button className="btn" onClick={save}>Save ticket</button>
+          <a className="btn btn--ghost" href={url} download={file}>Download</a>
+          <button className="btn btn--ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const Section = ({ id, kicker, title, children, band, flora, center }:
@@ -376,7 +401,8 @@ function MapEmbed() {
     io.observe(el);
     return () => { io.disconnect(); window.clearTimeout(t); };
   }, []);
-  return <div className="map" ref={box}>{src && <iframe src={src} title="Venue map" referrerPolicy="no-referrer-when-downgrade" allowFullScreen />}</div>;
+  return <div className="map" ref={box}>{src && <iframe src={src} title="Venue map" referrerPolicy="no-referrer-when-downgrade" allowFullScreen />}
+    {/^https?:\/\//.test(EVENT.mapLink) && <a className="map__open" href={EVENT.mapLink} target="_blank" rel="noopener noreferrer">Open in Google Maps ↗</a>}</div>;
 }
 
 function Details() {
@@ -561,6 +587,7 @@ function Finder({ onReveal }: { onReveal: () => void }) {
   const [rsvp, setRsvp] = useState<RsvpStatus>("pending");
   const [sent, setSent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [ticketBlob, setTicketBlob] = useState<Blob | null>(null);
   const req = useRef(0);
   const input = useRef<HTMLInputElement>(null);
 
@@ -656,7 +683,7 @@ function Finder({ onReveal }: { onReveal: () => void }) {
                 {!API.endpoint && <p className="fine">Demo mode: replies stay in this browser until a Google Sheet is connected (see data.ts).</p>}
               </div>
               <div className="result__actions">
-                <button className="btn" disabled={saving} onClick={async () => { setSaving(true); try { await downloadTicketImage(guest, rsvp); } finally { setSaving(false); } }}>{saving ? "Preparing…" : "Download ticket"}</button>
+                <button className="btn" disabled={saving} onClick={async () => { setSaving(true); try { const b = await renderTicketBlob(guest, rsvp); if (b) setTicketBlob(b); else setSent("Could not prepare the picture. Please screenshot your ticket instead."); } catch { setSent("Could not prepare the picture. Please screenshot your ticket instead."); } finally { setSaving(false); } }}>{saving ? "Preparing…" : "Save ticket"}</button>
                 <button className="btn btn--ghost" onClick={() => goTo("invitation")}>Back to invitation</button>
                 <button className="btn btn--ghost" onClick={reset}>Search again</button>
               </div>
@@ -664,6 +691,7 @@ function Finder({ onReveal }: { onReveal: () => void }) {
           )}
         </div>
       </div>
+      {ticketBlob && guest && <TicketModal blob={ticketBlob} name={guest.fullName} onClose={() => setTicketBlob(null)} />}
     </section>
   );
 }
